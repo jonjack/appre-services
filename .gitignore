@@ -137,3 +137,26 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Build artifacts and outputs
+# Rust build artifacts
+**/target/
+**/bin/
+Cargo.lock
+
+# CDK build outputs
+**/cdk.out/
+**/dist/
+
+# Lambda build artifacts
+**/*.zip
+**/bootstrap
+**/lambda-*.tar.gz
+
+# AWS deployment artifacts
+**/.aws-sam/
+**/samconfig.toml
+
+# General build directories
+**/build/
+**/out/
