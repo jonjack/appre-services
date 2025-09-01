@@ -3,12 +3,11 @@ use aws_lambda_events::event::cognito::CognitoEventUserPoolsCreateAuthChallenge;
 use aws_sdk_cognitoidentityprovider::Client as CognitoClient;
 use lambda_runtime::{run, service_fn, Error, LambdaEvent};
 use std::collections::HashMap;
-use tracing::{info, error, warn};
+use tracing::{error, info, warn};
 
 use auth_shared::{
-    AuthError, AuthResult, DynamoDBService, SESService, 
-    RateLimitService, OTPRecord, generate_otp, hash_otp, current_timestamp, 
-    generate_challenge_id, is_valid_email
+    current_timestamp, generate_challenge_id, generate_otp, hash_otp, is_valid_email, AuthError,
+    AuthResult, DynamoDBService, OTPRecord, RateLimitService, SESService,
 };
 
 async fn confirm_user_in_cognito(
@@ -53,7 +52,7 @@ async fn function_handler(
     event: LambdaEvent<CognitoEventUserPoolsCreateAuthChallenge>,
 ) -> Result<CognitoEventUserPoolsCreateAuthChallenge, Error> {
     let mut response_event = event.payload;
-    
+
     match handle_create_challenge(&mut response_event).await {
         Ok(_) => {
             info!("Successfully created auth challenge");
@@ -80,11 +79,20 @@ async fn handle_create_challenge(
     info!("  - Challenge name: {:?}", event.request.challenge_name);
     info!("  - Session: {:?}", event.request.session);
     info!("  - Client metadata: {:?}", event.request.client_metadata);
-    
+
     info!("Event header:");
-    info!("  - Header user_name: {:?}", event.cognito_event_user_pools_header.user_name);
-    info!("  - Header region: {:?}", event.cognito_event_user_pools_header.region);
-    info!("  - Header user_pool_id: {:?}", event.cognito_event_user_pools_header.user_pool_id);
+    info!(
+        "  - Header user_name: {:?}",
+        event.cognito_event_user_pools_header.user_name
+    );
+    info!(
+        "  - Header region: {:?}",
+        event.cognito_event_user_pools_header.region
+    );
+    info!(
+        "  - Header user_pool_id: {:?}",
+        event.cognito_event_user_pools_header.user_pool_id
+    );
     info!("=== END CREATE CHALLENGE EVENT DEBUG ===");
 
     // Extract email from user attributes or client metadata
@@ -93,12 +101,16 @@ async fn handle_create_challenge(
     } else if let Some(email) = event.request.client_metadata.get("email") {
         email
     } else {
-        return Err(AuthError::ValidationError("Email not found in user attributes or client metadata".to_string()));
+        return Err(AuthError::ValidationError(
+            "Email not found in user attributes or client metadata".to_string(),
+        ));
     };
 
     // Validate email format
     if !is_valid_email(email) {
-        return Err(AuthError::ValidationError("Invalid email format".to_string()));
+        return Err(AuthError::ValidationError(
+            "Invalid email format".to_string(),
+        ));
     }
 
     info!("Creating auth challenge for email: {}", email);
@@ -126,13 +138,13 @@ async fn handle_create_challenge(
     // Check rate limiting
     if !rate_limit_service.check_rate_limit(email).await? {
         warn!("Rate limit exceeded for email: {}", email);
-        
+
         // Get reset time for user feedback
         let reset_time = rate_limit_service.get_rate_limit_reset_time(email).await?;
         let reset_minutes = reset_time.unwrap_or(0) / 60;
-        
+
         return Err(AuthError::RateLimitExceeded(format!(
-            "Too many requests. Try again in {} minutes.", 
+            "Too many requests. Try again in {} minutes.",
             reset_minutes.max(1)
         )));
     }
@@ -145,7 +157,15 @@ async fn handle_create_challenge(
         }
         None => {
             info!("Creating new user for email: {}", email);
-            dynamodb_service.create_user(email).await?
+            // Use the Cognito user_name (which is the Cognito sub) as the user_id
+            let cognito_user_id = event
+                .cognito_event_user_pools_header
+                .user_name
+                .as_ref()
+                .ok_or_else(|| {
+                    AuthError::InternalError("Cognito user_name not available".to_string())
+                })?;
+            dynamodb_service.create_user(email, cognito_user_id).await?
         }
     };
 

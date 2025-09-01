@@ -15,6 +15,7 @@ export class AuthenticationStack extends cdk.Stack {
   public readonly otpTable!: dynamodb.Table;
   public readonly rateLimitTable!: dynamodb.Table;
   public readonly usersTable!: dynamodb.Table;
+  public readonly sessionTable!: dynamodb.Table;
 
   constructor(scope: Construct, id: string, props: AuthenticationStackProps) {
     super(scope, id, props);
@@ -82,6 +83,33 @@ export class AuthenticationStack extends cdk.Stack {
       sortKey: { name: 'created_at', type: dynamodb.AttributeType.STRING },
       projectionType: dynamodb.ProjectionType.ALL,
     });
+
+    // User Sessions Table
+    (this as any).sessionTable = new dynamodb.Table(this, 'SessionTable', {
+      tableName: `user-sessions-${environment}`,
+      partitionKey: { name: 'session_id', type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      timeToLiveAttribute: 'expires_at',
+      encryption: dynamodb.TableEncryption.AWS_MANAGED,
+      pointInTimeRecovery: environment === 'prod',
+      removalPolicy: environment === 'prod' ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY,
+    });
+
+    // GSI for user lookup (to find all sessions for a user)
+    this.sessionTable.addGlobalSecondaryIndex({
+      indexName: 'user-sessions-index',
+      partitionKey: { name: 'user_id', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'created_at', type: dynamodb.AttributeType.NUMBER },
+      projectionType: dynamodb.ProjectionType.ALL,
+    });
+
+    // GSI for cleanup queries (optional - for monitoring expired sessions)
+    this.sessionTable.addGlobalSecondaryIndex({
+      indexName: 'expires-at-index',
+      partitionKey: { name: 'user_id', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'expires_at', type: dynamodb.AttributeType.NUMBER },
+      projectionType: dynamodb.ProjectionType.KEYS_ONLY,
+    });
   }
 
   private createLambdaFunctions(environment: string) {
@@ -97,6 +125,7 @@ export class AuthenticationStack extends cdk.Stack {
     this.otpTable.grantReadWriteData(lambdaRole);
     this.rateLimitTable.grantReadWriteData(lambdaRole);
     this.usersTable.grantReadWriteData(lambdaRole);
+    this.sessionTable.grantReadWriteData(lambdaRole);
 
     // Grant SES permissions
     lambdaRole.addToPolicy(new iam.PolicyStatement({
@@ -134,6 +163,7 @@ export class AuthenticationStack extends cdk.Stack {
         OTP_TABLE_NAME: this.otpTable.tableName,
         RATE_LIMIT_TABLE_NAME: this.rateLimitTable.tableName,
         USERS_TABLE_NAME: this.usersTable.tableName,
+        SESSION_TABLE_NAME: this.sessionTable.tableName,
         ENVIRONMENT: environment,
         FROM_EMAIL: `noreply@appreciata.com`, // Update with your verified SES domain
         DEPLOYMENT_TIMESTAMP: Date.now().toString(), // Force redeployment
@@ -153,6 +183,7 @@ export class AuthenticationStack extends cdk.Stack {
       environment: {
         OTP_TABLE_NAME: this.otpTable.tableName,
         USERS_TABLE_NAME: this.usersTable.tableName,
+        SESSION_TABLE_NAME: this.sessionTable.tableName,
         ENVIRONMENT: environment,
         DEPLOYMENT_TIMESTAMP: Date.now().toString(), // Force redeployment
       },
@@ -355,6 +386,12 @@ export class AuthenticationStack extends cdk.Stack {
       value: this.usersTable.tableName,
       description: 'Users DynamoDB Table Name',
       exportName: `ApreciataUsersTable-${this.node.tryGetContext('environment') || 'dev'}`,
+    });
+
+    new cdk.CfnOutput(this, 'SessionTableName', {
+      value: this.sessionTable.tableName,
+      description: 'User Sessions DynamoDB Table Name',
+      exportName: `ApreciataSessionTable-${this.node.tryGetContext('environment') || 'dev'}`,
     });
   }
 }

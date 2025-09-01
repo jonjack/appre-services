@@ -11,6 +11,7 @@ export declare class AuthenticationStack extends cdk.Stack {
     readonly otpTable: dynamodb.Table;
     readonly rateLimitTable: dynamodb.Table;
     readonly usersTable: dynamodb.Table;
+    readonly sessionTable: dynamodb.Table;
     constructor(scope: Construct, id: string, props: AuthenticationStackProps);
     private createDynamoDBTables;
     private createLambdaFunctions;

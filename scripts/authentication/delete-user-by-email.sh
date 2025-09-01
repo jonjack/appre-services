@@ -60,7 +60,7 @@ else
 fi
 
 # Check required environment variables
-REQUIRED_VARS=("USERS_TABLE_NAME" "OTP_TABLE_NAME" "RATE_LIMIT_TABLE_NAME" "COGNITO_USER_POOL_ID" "AWS_REGION")
+REQUIRED_VARS=("USERS_TABLE_NAME" "OTP_TABLE_NAME" "RATE_LIMIT_TABLE_NAME" "SESSION_TABLE_NAME" "COGNITO_USER_POOL_ID" "AWS_REGION")
 for var in "${REQUIRED_VARS[@]}"; do
     if [ -z "${!var}" ]; then
         print_error "Environment variable $var is not set"
@@ -72,6 +72,7 @@ print_info "Environment variables loaded:"
 print_info "  - Users Table: $USERS_TABLE_NAME"
 print_info "  - OTP Table: $OTP_TABLE_NAME"
 print_info "  - Rate Limit Table: $RATE_LIMIT_TABLE_NAME"
+print_info "  - Session Table: $SESSION_TABLE_NAME"
 print_info "  - Cognito User Pool: $COGNITO_USER_POOL_ID"
 print_info "  - AWS Region: $AWS_REGION"
 echo
@@ -111,6 +112,7 @@ print_warning "This includes:"
 print_warning "  - User profile from DynamoDB"
 print_warning "  - OTP records from DynamoDB"
 print_warning "  - Rate limit records from DynamoDB"
+print_warning "  - Session records from DynamoDB"
 print_warning "  - User account from Cognito"
 echo
 read -p "Are you sure you want to continue? (y/N): " -n 1 -r
@@ -256,8 +258,10 @@ delete_rate_limit_records() {
 }
 
 # Function to delete user from DynamoDB users table (uses user_id as primary key)
+# Returns the user_id via global variable USER_ID for use in session deletion
 delete_user_from_users_table() {
     local email=$1
+    USER_ID=""  # Global variable to store user_id
     
     print_info "Looking up user in Users table..."
     
@@ -310,6 +314,7 @@ delete_user_from_users_table() {
     fi
     
     print_info "Found user with ID: $user_id"
+    USER_ID="$user_id"  # Store for session deletion
     
     # Delete the user by user_id, capture errors
     local delete_output
@@ -331,6 +336,108 @@ delete_user_from_users_table() {
         print_error "Failed to delete user from Users table"
         print_error "Delete error details: $delete_output"
         return 1
+    fi
+}
+
+# Function to delete all session records for a user_id
+delete_user_sessions() {
+    local user_id=$1
+    
+    if [ -z "$user_id" ]; then
+        print_warning "No user_id provided, skipping session deletion"
+        return 0
+    fi
+    
+    print_info "Deleting session records for user_id: $user_id"
+    
+    # Query all sessions for this user using the user-sessions-index GSI
+    local query_output
+    query_output=$(aws dynamodb query \
+        --region "$AWS_REGION" \
+        --table-name "$SESSION_TABLE_NAME" \
+        --index-name "user-sessions-index" \
+        --key-condition-expression "user_id = :user_id" \
+        --expression-attribute-values "{\":user_id\":{\"S\":\"$user_id\"}}" \
+        --output json 2>&1)
+    local query_exit_code=$?
+    
+    if [ $query_exit_code -ne 0 ]; then
+        print_error "Failed to query Session table"
+        print_error "Query error details: $query_output"
+        return 1
+    fi
+    
+    # Check if any sessions exist
+    local item_count
+    item_count=$(echo "$query_output" | jq -r '.Count' 2>/dev/null)
+    if [ $? -ne 0 ]; then
+        print_error "Failed to parse session query response"
+        print_error "Response was: $query_output"
+        return 1
+    fi
+    
+    if [ "$item_count" -eq 0 ]; then
+        print_warning "No session records found for user_id: $user_id"
+        return 0
+    fi
+    
+    print_info "Found $item_count session record(s) to delete"
+    
+    # Extract and delete each session record
+    local deleted_count=0
+    local failed_count=0
+    
+    # Use jq to extract each item and delete it
+    echo "$query_output" | jq -r '.Items[] | @base64' | while read -r item; do
+        # Decode the base64 item
+        local decoded_item
+        decoded_item=$(echo "$item" | base64 --decode)
+        
+        # Extract session_id (primary key)
+        local session_id
+        session_id=$(echo "$decoded_item" | jq -r '.session_id.S')
+        
+        if [ "$session_id" != "null" ] && [ -n "$session_id" ]; then
+            # Delete this specific session record
+            local delete_output
+            delete_output=$(aws dynamodb delete-item \
+                --region "$AWS_REGION" \
+                --table-name "$SESSION_TABLE_NAME" \
+                --key "{\"session_id\":{\"S\":\"$session_id\"}}" \
+                --output json 2>&1)
+            local delete_exit_code=$?
+            
+            if [ $delete_exit_code -eq 0 ]; then
+                ((deleted_count++))
+            else
+                ((failed_count++))
+                print_error "Failed to delete session record with ID $session_id"
+                print_error "Delete error: $delete_output"
+            fi
+        fi
+    done
+    
+    # Verify deletion by checking if any sessions remain
+    local final_query_output
+    final_query_output=$(aws dynamodb query \
+        --region "$AWS_REGION" \
+        --table-name "$SESSION_TABLE_NAME" \
+        --index-name "user-sessions-index" \
+        --key-condition-expression "user_id = :user_id" \
+        --expression-attribute-values "{\":user_id\":{\"S\":\"$user_id\"}}" \
+        --select COUNT \
+        --output json 2>&1)
+    
+    if [ $? -eq 0 ]; then
+        local remaining_count
+        remaining_count=$(echo "$final_query_output" | jq -r '.Count' 2>/dev/null)
+        if [ "$remaining_count" -eq 0 ]; then
+            print_success "Deleted all session records for user_id: $user_id"
+        else
+            print_warning "Some session records may still remain ($remaining_count found)"
+        fi
+    else
+        print_warning "Could not verify session record deletion"
     fi
 }
 
@@ -380,9 +487,16 @@ delete_cognito_user() {
 
 # Execute deletions
 ERRORS=0
+USER_ID=""  # Global variable to store user_id for session deletion
 
 # Delete from Users table (special handling for user_id primary key)
+# This also populates USER_ID for session deletion
 if ! delete_user_from_users_table "$EMAIL"; then
+    ((ERRORS++))
+fi
+
+# Delete from Session table (uses user_id from Users table lookup)
+if ! delete_user_sessions "$USER_ID"; then
     ((ERRORS++))
 fi
 
