@@ -73,27 +73,7 @@ async fn handle_create_challenge(
     event: &mut CognitoEventUserPoolsCreateAuthChallenge,
 ) -> AuthResult<()> {
     // Debug: Log the entire event structure
-    info!("=== CREATE CHALLENGE EVENT DEBUG ===");
-    info!("Event request:");
     info!("  - User attributes: {:?}", event.request.user_attributes);
-    info!("  - Challenge name: {:?}", event.request.challenge_name);
-    info!("  - Session: {:?}", event.request.session);
-    info!("  - Client metadata: {:?}", event.request.client_metadata);
-
-    info!("Event header:");
-    info!(
-        "  - Header user_name: {:?}",
-        event.cognito_event_user_pools_header.user_name
-    );
-    info!(
-        "  - Header region: {:?}",
-        event.cognito_event_user_pools_header.region
-    );
-    info!(
-        "  - Header user_pool_id: {:?}",
-        event.cognito_event_user_pools_header.user_pool_id
-    );
-    info!("=== END CREATE CHALLENGE EVENT DEBUG ===");
 
     // Extract email from user attributes or client metadata
     let email = if let Some(email) = event.request.user_attributes.get("email") {
@@ -115,57 +95,108 @@ async fn handle_create_challenge(
 
     info!("Creating auth challenge for email: {}", email);
 
+    // Log all environment variables for debugging
+    info!("=== ENVIRONMENT VARIABLES DEBUG ===");
+    for (key, value) in std::env::vars() {
+        if key.contains("TABLE") || key.contains("EMAIL") || key.contains("APP") || key.contains("ENVIRONMENT") {
+            info!("  {}={}", key, value);
+        }
+    }
+    info!("=== END ENVIRONMENT VARIABLES DEBUG ===");
+
     // Initialize AWS clients
     let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
     let dynamodb_client = aws_sdk_dynamodb::Client::new(&config);
     let ses_client = aws_sdk_ses::Client::new(&config);
 
     // Get environment variables
-    let otp_table = std::env::var("OTP_TABLE_NAME")
-        .map_err(|_| AuthError::InternalError("OTP_TABLE_NAME not set".to_string()))?;
-    let rate_limit_table = std::env::var("RATE_LIMIT_TABLE_NAME")
-        .map_err(|_| AuthError::InternalError("RATE_LIMIT_TABLE_NAME not set".to_string()))?;
-    let users_table = std::env::var("USERS_TABLE_NAME")
-        .map_err(|_| AuthError::InternalError("USERS_TABLE_NAME not set".to_string()))?;
     let from_email = std::env::var("FROM_EMAIL")
-        .map_err(|_| AuthError::InternalError("FROM_EMAIL not set".to_string()))?;
+        .map_err(|e| {
+            error!("FROM_EMAIL environment variable not set: {:?}", e);
+            AuthError::InternalError("FROM_EMAIL not set".to_string())
+        })?;
 
-    // Initialize services
-    let rate_limit_service = RateLimitService::new(dynamodb_client.clone(), rate_limit_table);
-    let dynamodb_service = DynamoDBService::new(dynamodb_client.clone(), otp_table, users_table);
-    let ses_service = SESService::new(ses_client, from_email);
+    // Initialize services using naming utilities
+    info!("Initializing RateLimitService...");
+    let rate_limit_service = RateLimitService::from_env(dynamodb_client.clone())
+        .map_err(|e| {
+            error!("Failed to initialize RateLimitService: {}", e);
+            AuthError::InternalError(format!("Failed to initialize RateLimitService: {}", e))
+        })?;
+    
+    info!("Initializing DynamoDBService...");
+    let dynamodb_service = DynamoDBService::from_env(dynamodb_client.clone())
+        .map_err(|e| {
+            error!("Failed to initialize DynamoDBService: {}", e);
+            AuthError::InternalError(format!("Failed to initialize DynamoDBService: {}", e))
+        })?;
+    
+    info!("Initializing SESService...");
+    let ses_service = SESService::new(ses_client, from_email)
+        .map_err(|e| {
+            error!("Failed to initialize SESService: {}", e);
+            AuthError::InternalError(format!("Failed to initialize SESService: {}", e))
+        })?;
+    
+    info!("All services initialized successfully");
 
     // Check rate limiting
-    if !rate_limit_service.check_rate_limit(email).await? {
-        warn!("Rate limit exceeded for email: {}", email);
+    info!("Checking rate limit for email: {}", email);
+    match rate_limit_service.check_rate_limit(email).await {
+        Ok(allowed) => {
+            if !allowed {
+                warn!("Rate limit exceeded for email: {}", email);
 
-        // Get reset time for user feedback
-        let reset_time = rate_limit_service.get_rate_limit_reset_time(email).await?;
-        let reset_minutes = reset_time.unwrap_or(0) / 60;
+                // Get reset time for user feedback
+                let reset_time = rate_limit_service.get_rate_limit_reset_time(email).await?;
+                let reset_minutes = reset_time.unwrap_or(0) / 60;
 
-        return Err(AuthError::RateLimitExceeded(format!(
-            "Too many requests. Try again in {} minutes.",
-            reset_minutes.max(1)
-        )));
+                return Err(AuthError::RateLimitExceeded(format!(
+                    "Too many requests. Try again in {} minutes.",
+                    reset_minutes.max(1)
+                )));
+            }
+            info!("Rate limit check passed for email: {}", email);
+        }
+        Err(e) => {
+            error!("Rate limit check failed: {}", e);
+            return Err(e);
+        }
     }
 
     // Check if user exists, create if new registration
-    let user = match dynamodb_service.get_user_by_email(email).await? {
-        Some(user) => {
-            info!("Existing user found for email: {}", email);
-            user
+    info!("Checking if user exists for email: {}", email);
+    let user = match dynamodb_service.get_user_by_email(email).await {
+        Ok(user_opt) => match user_opt {
+            Some(user) => {
+                info!("Existing user found for email: {}", email);
+                user
+            }
+            None => {
+                info!("Creating new user for email: {}", email);
+                // Use the Cognito user_name (which is the Cognito sub) as the user_id
+                let cognito_user_id = event
+                    .cognito_event_user_pools_header
+                    .user_name
+                    .as_ref()
+                    .ok_or_else(|| {
+                        AuthError::InternalError("Cognito user_name not available".to_string())
+                    })?;
+                match dynamodb_service.create_user(email, cognito_user_id).await {
+                    Ok(user) => {
+                        info!("Successfully created new user for email: {}", email);
+                        user
+                    }
+                    Err(e) => {
+                        error!("Failed to create user: {}", e);
+                        return Err(e);
+                    }
+                }
+            }
         }
-        None => {
-            info!("Creating new user for email: {}", email);
-            // Use the Cognito user_name (which is the Cognito sub) as the user_id
-            let cognito_user_id = event
-                .cognito_event_user_pools_header
-                .user_name
-                .as_ref()
-                .ok_or_else(|| {
-                    AuthError::InternalError("Cognito user_name not available".to_string())
-                })?;
-            dynamodb_service.create_user(email, cognito_user_id).await?
+        Err(e) => {
+            error!("Failed to get user by email: {}", e);
+            return Err(e);
         }
     };
 

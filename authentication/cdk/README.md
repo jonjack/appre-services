@@ -11,9 +11,9 @@ This CDK stack creates the AWS infrastructure for the passwordless authenticatio
 - **Custom attributes** for user status and Stripe account ID
 
 ### DynamoDB Tables
-- **`appreciata-auth-otps-{env}`** - OTP storage with TTL
-- **`appreciata-auth-rate-limits-{env}`** - Rate limiting with TTL  
-- **`appreciata-users-{env}`** - User profiles with GSI for email and status
+- **`{APP_NAME}-auth-otps-{env}`** - OTP storage with TTL
+- **`{APP_NAME}-auth-rate-limits-{env}`** - Rate limiting with TTL  
+- **`{APP_NAME}-users-{env}`** - User profiles with GSI for email and status
 
 ### Lambda Functions (Rust)
 - **CreateAuthChallenge** - Generates and sends OTP via SES
@@ -50,15 +50,15 @@ The Lambda functions receive these environment variables:
 ### SES Setup
 Before deployment, verify your domain in SES:
 1. Go to AWS SES Console
-2. Add and verify your domain (e.g., appreciata.com)
+2. Add and verify your domain (e.g., appre.com)
 3. Update `FROM_EMAIL` in the stack to use your verified domain
 
 ## Outputs
 
 The stack exports these values for use in other stacks:
-- `ApreciataUserPoolId-{env}` - Cognito User Pool ID
-- `ApreciataUserPoolClientId-{env}` - Cognito Client ID  
-- `ApreciataUsersTable-{env}` - Users table name
+- `AppreUserPoolId-{env}` - Cognito User Pool ID
+- `AppreUserPoolClientId-{env}` - Cognito Client ID  
+- `AppreUsersTable-{env}` - Users table name
 
 ## Security Features
 

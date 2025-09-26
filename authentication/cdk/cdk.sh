@@ -53,26 +53,30 @@ case $OPERATION in
         ;;
     "synth")
         echo "🔍 Synthesizing CloudFormation template..."
-        npx cdk synth ApreciataAuth-$ENVIRONMENT \
+        STACK_NAME="${APP_NAME:-appre}-$ENVIRONMENT-authentication"
+        npx cdk synth $STACK_NAME \
             --context environment=$ENVIRONMENT \
             --context region=$REGION
         ;;
     "diff")
         echo "📊 Showing differences..."
-        npx cdk diff ApreciataAuth-$ENVIRONMENT \
+        STACK_NAME="${APP_NAME:-appre}-$ENVIRONMENT-authentication"
+        npx cdk diff $STACK_NAME \
             --context environment=$ENVIRONMENT \
             --context region=$REGION
         ;;
     "deploy")
         echo "🚀 Deploying stack..."
-        npx cdk deploy ApreciataAuth-$ENVIRONMENT \
+        STACK_NAME="${APP_NAME:-appre}-$ENVIRONMENT-authentication"
+        npx cdk deploy $STACK_NAME \
             --context environment=$ENVIRONMENT \
             --context region=$REGION \
             --require-approval never
         ;;
     "destroy")
         echo "💥 Destroying stack..."
-        npx cdk destroy ApreciataAuth-$ENVIRONMENT \
+        STACK_NAME="${APP_NAME:-appre}-$ENVIRONMENT-authentication"
+        npx cdk destroy $STACK_NAME \
             --context environment=$ENVIRONMENT \
             --context region=$REGION \
             --force

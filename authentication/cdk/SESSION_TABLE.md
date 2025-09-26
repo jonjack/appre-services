@@ -1,7 +1,7 @@
 # Session Table Documentation
 
 ## Overview
-The session table manages user sessions for the Appreciata web application, providing secure session management with sliding expiry.
+The session table manages user sessions for the Appre web application, providing secure session management with sliding expiry.
 
 ## Table Structure
 
@@ -61,7 +61,7 @@ The session table manages user sessions for the Appreciata web application, prov
 
 ### 1. Deploy the Infrastructure
 ```bash
-cd appreciata-services/authentication/cdk
+cd appre-services/authentication/cdk
 ./deploy.sh dev eu-west-2
 ```
 
@@ -71,7 +71,7 @@ cd appreciata-services/authentication/cdk
 ```
 
 ### 3. Update Webapp Configuration
-Copy the outputs to `appreciata-webapp/app/.env.development`:
+Copy the outputs to `appre-webapp/app/.env.development`:
 ```bash
 SESSION_TABLE_NAME=user-sessions-dev
 COGNITO_USER_POOL_ID=eu-west-2_xxxxxxxxx

@@ -1,0 +1,16 @@
+{
+  "name": "notifications-testing",
+  "version": "1.0.0",
+  "description": "Testing utilities for notifications service",
+  "scripts": {
+    "test:ses": "node test-ses-lambda.js",
+    "test:ses-direct": "node test-ses-direct.js",
+    "test:queue": "node test-email-queue.js",
+    "diagnose:ses": "node diagnose-ses.js",
+    "test:template": "node test-template-content.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-sqs": "^3.0.0",
+    "@aws-sdk/client-sesv2": "^3.0.0"
+  }
+}

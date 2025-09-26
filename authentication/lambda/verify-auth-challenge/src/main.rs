@@ -103,14 +103,9 @@ async fn handle_verify_challenge(event: &CognitoVerifyAuthChallengeEvent) -> Aut
     let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
     let dynamodb_client = aws_sdk_dynamodb::Client::new(&config);
 
-    // Get environment variables
-    let otp_table = std::env::var("OTP_TABLE_NAME")
-        .map_err(|_| AuthError::InternalError("OTP_TABLE_NAME not set".to_string()))?;
-    let users_table = std::env::var("USERS_TABLE_NAME")
-        .map_err(|_| AuthError::InternalError("USERS_TABLE_NAME not set".to_string()))?;
-
-    // Initialize service
-    let dynamodb_service = DynamoDBService::new(dynamodb_client, otp_table, users_table);
+    // Initialize service using naming utilities
+    let dynamodb_service = DynamoDBService::from_env(dynamodb_client)
+        .map_err(|e| AuthError::InternalError(format!("Failed to initialize DynamoDBService: {}", e)))?;
 
     // Retrieve OTP record
     let otp_record = match dynamodb_service.get_otp(email).await? {

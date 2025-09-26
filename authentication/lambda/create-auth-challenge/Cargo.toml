@@ -23,4 +23,4 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 # Local shared library
-auth-shared = { path = "../shared" }
+auth-shared = { path = "../../shared" }

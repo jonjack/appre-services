@@ -38,29 +38,19 @@ async fn handle_define_challenge(
     event: &mut CognitoEventUserPoolsDefineAuthChallenge,
 ) -> AuthResult<()> {
     // Debug: Log the entire event structure
-    info!("=== FULL EVENT DEBUG ===");
-    info!("Event request:");
     info!("  - User attributes: {:?}", event.request.user_attributes);
-    info!("  - Session: {:?}", event.request.session);
-    info!("  - Client metadata: {:?}", event.request.client_metadata);
-    info!("  - User not found: {:?}", event.request.user_not_found);
-    
-    info!("Event header:");
-    info!("  - Header user_name: {:?}", event.cognito_event_user_pools_header.user_name);
-    info!("  - Header region: {:?}", event.cognito_event_user_pools_header.region);
-    info!("  - Header user_pool_id: {:?}", event.cognito_event_user_pools_header.user_pool_id);
-    
-    info!("Event response (before modification):");
-    info!("  - Challenge name: {:?}", event.response.challenge_name);
-    info!("  - Issue tokens: {:?}", event.response.issue_tokens);
-    info!("  - Fail authentication: {:?}", event.response.fail_authentication);
+    //info!("  - Session: {:?}", event.request.session);
+    //info!("  - Client metadata: {:?}", event.request.client_metadata);
+    //info!("  - User not found: {:?}", event.request.user_not_found);
+    //info!("  - Challenge name: {:?}", event.response.challenge_name);
+    //info!("  - Issue tokens: {:?}", event.response.issue_tokens);
+    //info!("  - Fail authentication: {:?}", event.response.fail_authentication);
     
     // Try to serialize the entire event for debugging
     match serde_json::to_string_pretty(&event) {
         Ok(json) => info!("Full event JSON: {}", json),
         Err(e) => info!("Failed to serialize event: {}", e),
     }
-    info!("=== END EVENT DEBUG ===");
 
     // Extract email from various sources
     let email = if let Some(email) = event.request.user_attributes.get("email") {
@@ -94,16 +84,18 @@ async fn handle_define_challenge(
         .find(|r| r.challenge_name.as_deref() == Some(CUSTOM));
 
     // Debug session analysis
-    info!("Session analysis:");
-    info!("  - has_custom_challenge: {}", has_custom_challenge);
-    info!("  - last_custom challenge_result: {:?}", last_custom.and_then(|r| Some(r.challenge_result)));
-    info!("  - Session entries count: {}", session.len());
+    //info!("Session analysis:");
+    //info!("  - has_custom_challenge: {}", has_custom_challenge);
+    //info!("  - last_custom challenge_result: {:?}", last_custom.and_then(|r| Some(r.challenge_result)));
+    //info!("  - Session entries count: {}", session.len());
+    /* 
     for (i, entry) in session.iter().enumerate() {
         if let Some(entry) = entry {
             info!("  - Session[{}]: challenge_name={:?}, challenge_result={:?}", 
                   i, entry.challenge_name, entry.challenge_result);
         }
     }
+    */
 
     match (
         has_custom_challenge,
@@ -152,11 +144,9 @@ async fn handle_define_challenge(
     }
 
     // Final response logging
-    info!("=== FINAL RESPONSE ===");
     info!("  - challenge_name: {:?}", event.response.challenge_name);
     info!("  - issue_tokens: {:?}", event.response.issue_tokens);
     info!("  - fail_authentication: {:?}", event.response.fail_authentication);
-    info!("=== END FINAL RESPONSE ===");
 
     Ok(())
 }

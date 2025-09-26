@@ -1,9 +1,10 @@
 [workspace]
+resolver = "2"
 members = [
     "create-auth-challenge",
     "verify-auth-challenge", 
     "define-auth-challenge",
-    "shared"
+    "pre-signup"
 ]
 
 [workspace.dependencies]
